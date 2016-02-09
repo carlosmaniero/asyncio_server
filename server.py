@@ -5,6 +5,7 @@ from http.server import BaseHTTPRequestHandler
 from io import StringIO
 from urllib.parse import parse_qs
 import json
+from routes import Mapper
 
 locale.setlocale(locale.LC_TIME, 'pt_BR.utf8')
 
@@ -213,14 +214,29 @@ class HttpResponse(object):
 class App(object):
     def __init__(self):
         self._loop_control = False
+        self._mapper = Mapper()
+
+    @asyncio.coroutine
+    def reverse_url(self, request):
+        path = request.header['PATH']
+        return self._mapper.match(path)
 
     @asyncio.coroutine
     def handle(self, reader, writer):
         request = HTTPRequest(reader)
         yield from request.process()
-        addr = writer.get_extra_info('peername')
-        print("Received from {}".format(addr))
-        yield from HttpResponse(writer, str(request.data)).close()
+        response = HttpResponse(writer)
+        reverse = yield from self.reverse_url(request)
+        fn = reverse.pop('_fn')
+        yield from fn(request, response, **reverse)
+        # addr = writer.get_extra_info('peername')
+        # print("Received from {}".format(addr))
+
+    def route(self, url, name=None, **kwargs):
+        def decorator(fn):
+            coro = asyncio.coroutine(fn)
+            self._mapper.connect(name, url, _fn=coro, **kwargs)
+        return decorator
 
     def start(self, loop=None, host='127.0.0.1', port=8888):
         if loop is None:
@@ -241,6 +257,13 @@ class App(object):
         if self._loop_control:
             loop.close()
 
-
 app = App()
+
+
+@app.route('/')
+def hello_world(request, response):
+    response.set_content('Hello World')
+    yield from response.close()
+
+
 app.start()
