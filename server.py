@@ -76,7 +76,7 @@ class HTTPRequest(BaseHTTPRequestHandler):
 
         request_text = b''
         while True:
-            request_text += yield from self.reader.read(1024)
+            request_text += yield from self.reader.read(2)
             self.reader.feed_eof()
             if self.reader.at_eof():
                 break
@@ -262,7 +262,7 @@ app = App()
 
 @app.route('/')
 def hello_world(request, response):
-    response.set_content('Hello World')
+    response.set_content(str(request.header))
     yield from response.close()
 
 
