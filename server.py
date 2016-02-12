@@ -76,7 +76,7 @@ class HTTPRequest(BaseHTTPRequestHandler):
 
         request_text = b''
         while True:
-            request_text += yield from self.reader.read(2)
+            request_text += yield from self.reader.read(100)
             self.reader.feed_eof()
             if self.reader.at_eof():
                 break
@@ -103,9 +103,10 @@ class HTTPRequest(BaseHTTPRequestHandler):
     @asyncio.coroutine
     def _process_json_body(self, body):
         '''Process json body'''
-        data = json.loads(body)
-        for key, value in data.items():
-            self.data[key] = value
+        if body:
+            data = json.loads(body)
+            for key, value in data.items():
+                self.data[key] = value
 
     @asyncio.coroutine
     def _process_urlencoded_body(self, body):
@@ -167,6 +168,9 @@ class HttpResponse(object):
 
     def set_content(self, content):
         ''' Set the content of response '''
+        if isinstance(content, dict) or isinstance(content, list):
+            self.set_header('Content-Type', 'application/json')
+            content = json.dumps(content)
         self._content = content
 
     def get_content(self):
@@ -202,13 +206,56 @@ class HttpResponse(object):
 
     def get_response(self):
         '''Get the response'''
-        return '{}\n\n{}'.format(self.get_header(), self.get_content()).encode()
+        return '{}\n\n{}'.format(
+            self.get_header(),
+            self.get_content()
+        ).encode()
 
     @asyncio.coroutine
     def close(self):
         self._writer.write(self.get_response())
         yield from self._writer.drain()
         self._writer.close()
+
+
+class BaseView(object):
+    def __init__(self, request, response, **kwargs):
+        self.request = request
+        self.response = response
+        self.kwargs = kwargs
+
+    @asyncio.coroutine
+    def _not_alloweded(self):
+        self.response.status_code = 405
+        self.response.set_content('405')
+        yield from self.response.close()
+
+    @asyncio.coroutine
+    def get(self):
+        yield from self._not_alloweded()
+
+    @asyncio.coroutine
+    def post(self):
+        yield from self._not_alloweded()
+
+    @asyncio.coroutine
+    def put(self):
+        yield from self._not_alloweded()
+
+    @asyncio.coroutine
+    def delete(self):
+        yield from self._not_alloweded()
+
+    @asyncio.coroutine
+    def handle(self):
+        method = self.request.header['METHOD']
+        methods = {
+            'GET': self.get,
+            'POST': self.post,
+            'PUT': self.put,
+            'DELETE': self.delete
+        }
+        yield from methods.get(method, self._not_alloweded)()
 
 
 class App(object):
@@ -222,20 +269,31 @@ class App(object):
         return self._mapper.match(path)
 
     @asyncio.coroutine
+    def handle_404(self, request, response):
+        response.status_code = 404
+        response.set_content('404')
+        yield from response.close()
+
+    @asyncio.coroutine
     def handle(self, reader, writer):
         request = HTTPRequest(reader)
         yield from request.process()
         response = HttpResponse(writer)
         reverse = yield from self.reverse_url(request)
-        fn = reverse.pop('_fn')
-        yield from fn(request, response, **reverse)
-        # addr = writer.get_extra_info('peername')
-        # print("Received from {}".format(addr))
+        try:
+            fn = reverse.pop('_fn')
+        except AttributeError:
+            yield from self.handle_404(request, response)
+        else:
+            if issubclass(fn, BaseView):
+                view = fn(request, response, **reverse)
+                yield from view.handle()
+            else:
+                yield from fn(request, response, **reverse)
 
     def route(self, url, name=None, **kwargs):
         def decorator(fn):
-            coro = asyncio.coroutine(fn)
-            self._mapper.connect(name, url, _fn=coro, **kwargs)
+            self._mapper.connect(name, url, _fn=fn, **kwargs)
         return decorator
 
     def start(self, loop=None, host='127.0.0.1', port=8888):
@@ -256,14 +314,3 @@ class App(object):
         loop.run_until_complete(server.wait_closed())
         if self._loop_control:
             loop.close()
-
-app = App()
-
-
-@app.route('/')
-def hello_world(request, response):
-    response.set_content(str(request.header))
-    yield from response.close()
-
-
-app.start()
