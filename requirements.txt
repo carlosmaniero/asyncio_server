@@ -13,7 +13,6 @@ py==1.4.31
 pymongo==2.8
 pytest==2.8.7
 pytest-asyncio==0.3.0
-pytest-ipdb==0.1.dev2
 repoze.lru==0.6
 requests==2.9.1
 Routes==2.2
