@@ -5,7 +5,7 @@ import os
 import datetime
 import serializers
 from bson import ObjectId
-from settings import db
+from settings import db, host, port
 
 
 app = App()
@@ -184,4 +184,4 @@ loop = asyncio.get_event_loop()
 loop.call_soon(asyncio.async, utils.check_token())
 
 # start the application
-app.start(loop)
+app.start(loop, host, port)
